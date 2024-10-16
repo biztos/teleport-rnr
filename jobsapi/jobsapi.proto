@@ -1,0 +1,80 @@
+// gRPC specification for rnr/jobsapi.
+
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/biztos/teleport-rnr/jobsapi";
+
+package jobsapi;
+
+// Interface exported by the server.
+service JobsApi {
+
+  // RPC to start a job.
+  rpc StartJob(JobStartRequest) returns (JobId) {}
+
+  // RPC to stream a job.
+  rpc StreamJob(JobId) returns (stream JobOutputLine) {}
+
+  // RPC to get a job's status.
+  rpc GetJobStatus(JobId) returns (JobStatusResult) {}
+
+  // RPC to stop a job (optionally with SIGKILL).
+  rpc StopJob(JobStopRequest) returns (JobStatusResult) {}
+
+}
+
+// A JobId identifies a job, at the moment only by PID.
+message JobId {
+  int32 pid = 1;
+}
+
+// A JobStartRequest is sent in a StartJob rpc.
+message JobStartRequest {
+  string command = 1;
+  repeated string args = 2;
+}
+
+// JobStatus tells us whether a job is running, finished, or had an error.
+enum JobStatus {
+  UNKNOWN = 0;
+  RUNNING = 1;
+  FINISHED = 2;
+  ERROR = 3;
+}
+
+// A JobStatusResult is received in responsed to a GetJobStatus rpc.
+message JobStatusResult {
+  int32 pid = 1;
+  JobStatus status = 2;
+  int32 exit_code = 3;
+}
+
+// A JobStreamRequest is sent in a StreamJob rpc.
+message JobStreamRequest {
+  int32 pid = 1;
+  bool truncate = 2;
+}
+
+// OutputType tells us whether the JobOutputLine came from STDOUT or STDERR.
+enum OutputType {
+  STDOUT = 0;
+  STDERR = 1;
+}
+
+// A JobOutputLine is received in response to a StreamJobOutput rpc.
+message JobOutputLine {
+  int32 pid = 1;
+  OutputType type = 2;
+  google.protobuf.Timestamp received = 3;
+  bool final = 4;
+  string output = 5;
+}
+
+// A JobStopRequest is sent in a StopJob rpc.
+// The return type for this rpc is JobStatusResult (it may still be running).
+message JobStopRequest {
+  int32 pid = 1;
+  bool kill = 2;
+}
