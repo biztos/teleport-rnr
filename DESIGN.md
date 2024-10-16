@@ -17,9 +17,7 @@ We assume:
 * Unlimited CPU, memory and disk are available.
 * State does not persist across server restarts.
 
-## Implementation Plan
-
-### Library
+## Library
 
 The reusable library handles the running of Linux jobs under their own
 cgroups and namespaces.  Authorization logic is included in the library, but
@@ -40,7 +38,7 @@ root privileges.  Jobs will be run as user `nobody` by default.
 > the newer versions of major distros, and is favored by [Kubernetes][cgk8s];
 > second, the v2 hierarchy makes creating cgroups here much simpler.
 
-#### Per-Job Resource Limits (cgroups)
+### Per-Job Resource Limits (cgroups)
 
 Each job is run under a new cgroup, which is a child of an overall cgroup
 controlling resources for the whole set of jobs.  Specific limits can be set
@@ -64,7 +62,7 @@ The standard cgroup virtual directory is used.
 > would be a hierarchy of app > user > process limits, and the ability to
 > use any limits allowed by the parent cgroup.
 
-#### Namespace isolation
+### Namespace isolation
 
 Jobs will be started with isolated namespaces using cloning, with the mount,
 networking and PID isolation set up using [reexec][reexec] approximately as
@@ -77,7 +75,7 @@ Thus each job process should only "see" itself.
 > this solution. Forking and namespaces are a major incompatibility between
 > Linux and Go.
 
-#### Process Output and Streaming
+### Process Output and Streaming
 
 The STDOUT and STDERR output of each process will be captured in a struct from
 which a gRPC streaming endpoint can read.
@@ -105,7 +103,7 @@ By default, the server prints all output to its own STDOUT as it arrives.
 > persistent storage would be better.  It would be fun to benchmark SQLite3
 > for that.
 
-#### Job Lifecycle
+### Job Lifecycle
 
 First a job is __started__:
 
@@ -138,14 +136,14 @@ aware that a job is no longer running.  These virtual directories are also
 removed on an orderly shutdown of the server, as running jobs are terminated
 or killed at that stage.
 
-### gRPC Server
+## gRPC Server
 
 The gRPC server will be built with the standard grpc codegen methods from the
 [jobsapi/jobsapi.proto](jobsapi/jobsapi.proto) spec file.
 
 Functions will be fairly thin wrappers around the Library.
 
-#### Authentication
+### Authentication
 
 Authentication is via mTLS, with users identified by email as a User Principal
 Name (UPN) [embedded][upns] within the Subject Alternative Name (SAN) of the
@@ -170,7 +168,7 @@ suite for maximum future-proofing.
 Certificate generation and management is out of scope of the system, but
 helper scripts for prototype cert generation will be included.
 
-#### Authorization
+### Authorization
 
 A user is *allowed* to run a set of know processes, or all processes in a
 directory or set of directories.  This is conceptually structured as a map:
@@ -203,9 +201,9 @@ can be set with command-line options when starting the server.
 > per user, or for groups, etc.
 
 
-#### Endpoints
+### Endpoints
 
-##### StartJob
+#### StartJob
 
 Starts a job, returning its PID on success.  The PID is the job identifier for
 the other endpoints.
@@ -215,15 +213,15 @@ the other endpoints.
 > messes with the PID in the parent namespace for instance -- then this may
 > need to change.
 
-##### GetJobStatus
+#### GetJobStatus
 
 Returns the status of the job: running, stopped, error.
 
-##### StopJob
+#### StopJob
 
 Stops a job via `SIGTERM` by default or, optionally, `SIGKILL`.
 
-##### StreamJobOutput
+#### StreamJobOutput
 
 Streams the output of a job, starting from the beginning of output and
 continuing until all output is streamed.
@@ -232,7 +230,7 @@ continuing until all output is streamed.
 > need a RemoveStoppedJob or equivalent, because you need to stream even if a
 > job has already completed.
 
-### Command-Line Interface
+## Command-Line Interface
 
 Starting the server with various settings:
 
