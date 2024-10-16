@@ -20,9 +20,7 @@ We assume:
 ## Library
 
 The reusable library handles the running of Linux jobs under their own
-cgroups and namespaces.  Authorization logic is included in the library, but
-is optional for running jobs. (The caller may use different authorization,
-or none at all.)
+cgroups and namespaces.
 
 __The job-lifecycle features must run as root on Linux with cgroups v2.__
 
