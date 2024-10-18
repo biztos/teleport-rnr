@@ -38,49 +38,27 @@ root privileges.  Jobs will be run as user `nobody` by default.
 
 ### Per-Job Resource Limits (cgroups)
 
-Each job is run under a new cgroup.  Specific limits can be set at server
-startup, with relatively low defaults as shown below.
+Each job is run under a new cgroup, which is a child of an overall cgroup
+controlling resources for the whole set of jobs.  Specific limits can be set
+by the caller, but defaults are available and are relatively low, in order to
+observe the limits in action.
 
 The cgroup controls will apply to `cpu.max`, `memory.max` and `io.max`.
 
-The default values are:
-
-* cpu.max: `1000 100000` which should equate to 1% CPU usage over time.
-* memory.max: `1048576` which can be written as `1M` and is in bytes.
-* io.max: `M:m rbps=10000 wbps=5000` with `M:m` being the Major/minor device number.
-
-The `io.max` value is repeated for each device we wish to limit: in practice
-this can be all devices; all except loopback; or only those which are used in
-the namespace mounts.
+The cgroup is removed when the job finishes or upon orderly shutdown of the
+process.
 
 The standard cgroup virtual directory is used.
 
-The process for creating a job-specific cgroup involves these steps:
-
-1. Create a cgroup subdirectory under `/sys/fs/cgroup` named for the job.
-2. Append the job's PID onto the `cgroup.procs` file in that directory.
-3. Append the required data to the three virtual control files as shown above.
-
-The correct device numbers must be determined in advance.
-
-> __Note:__ I prefer to just limit all devices in the spirit of "cutting
-> corners"
-> 
 > __Rationale:__ the requirement is "per job" but not necessarily _different_
 > for each job.  Creating a new cgroup is necessary in order to have the
-> limits apply to the one process.
+> limits apply to the one process (if this is not correct, please include a
+> reference).
 >
 > __Future:__ it would be great to have a limit-setting API, in fact my first
 > draft had exactly that but it was trimmed as out of scope.  Ideally there
 > would be a hierarchy of app > user > process limits, and the ability to
 > use any limits allowed by the parent cgroup.
-> 
-> __DANGER:__ if the system is configured with a nonstandard cgroup mount,
-> or with one that does not support the needed controllers under 
-> `cgroup.subtree_control` we can not set the control values.  We can however
-> skip those that are not supported and use the remaining ones.  It also is
-> possible for kernel configurations to result in some limits being silently
-> ignored.
 
 ### Namespace isolation
 
@@ -88,9 +66,7 @@ Jobs will be started with isolated namespaces using cloning, with the mount,
 networking and PID isolation set up using [reexec][reexec] approximately as
 described in the tutorial by [Ed King][edking].
 
-Specifically:
-
-__TBD__
+Thus each job process should only "see" itself.
 
 > __Rationale:__ after much digging, I was unable to find a reliable method of
 > doing `setns` and what I did find was neither simpler nor more isolated than
@@ -99,28 +75,37 @@ __TBD__
 
 ### Process Output and Streaming
 
-The Stdout and Stderr output of each process will be captured into custom
-`io.Writer`s tied to the process's `exec.Cmd`.  The gRPC server will stream
-data from the writers' underlying `[]byte`.  New writes will result in channel
-notifications.
+The STDOUT and STDERR output of each process will be captured in a struct from
+which a gRPC streaming endpoint can read.
 
-Write order *should* be stable, but in extreme cases this is not guaranteed.
+It will return one line of output at a time, with a received timestamp and an
+indicator of which handle was used. Thus, STDOUT and STDERR are streamed
+together.
 
-The output will be streamed to gRPC clients as binary data, with the CLI
-formatting it for readability.  The server will log output to its own Stdout
-by default, using approximately the same formatting.
+Due to the line-by-line output, behaviour in the case of very long lines or
+non-text data is undefined and may not be useful.  The last output from a
+command, when the channel is closed, will be sent regardless of whether it
+has a newline.
 
-> __Note:__ exact channel/goroutine impl is pending but this is the goal.
+By default, the server prints all output to its own STDOUT as it arrives.
+
+> __Rationale:__ cutting corners.  Chunking out data by other means is more
+> predictable; having an option for binmode is very useful (you'd need it to
+> download a file); separate streams for STDOUT and STDERR would be nifty;
+> but all that goes against the simplicity directive.
 > 
-> __Future:__ timestamps and better handling of Stdout/Stderr, including a
-> reasonable mix in the output stream so the user doesn't have to choose, or
-> can choose both.
+> Having the server log everything is basic good security manners, but also
+> useful for testing: the stream and the server logs should obviously agree.
+>
+> If we did not have infinite CPU and memory, writing the command output to
+> persistent storage would be better.  It would be fun to benchmark SQLite3
+> for that.
 
 ### Job Lifecycle
 
 First a job is __started__:
 
-* The structures to monitor the job are created and a unique `JobId` assigned.
+* The structures to monitor the job are created.
 * The job is executed with [reexec][reexec] magic for namespace isolation.
 * A cgroup is created for it and its PID is added to that cgroup.
 * It is registered internally as running.
@@ -138,9 +123,8 @@ If a client wants to __stream output__ then the structs holding Stdout and
 Stderr for the process are read and streamed to the client.
 
 To __stop__ a job, first we check whether it's still running.  If so, we send
-it a SIGKILL, registering the result and returning the exit code.  We then
-reap any child processes it may have left behind, by searching for them in
-`/proc/pid/status`.
+it either a SIGTERM or (only at the client's request) a SIGKILL and report
+the result.
 
 Stopped processes are still available for __streaming__ as long as the server
 is running (we have infinite CPU etc).
@@ -200,12 +184,16 @@ requested job will be checked.
 A system for managing these permissions over gRPC is _out of scope,_ but they
 can be set with command-line options when starting the server.
 
-Endpoints accepting a `JobId` require that the requesting user be the one who
-started the job.
-
 > __Rationale:__ the writ was *simple* and I find this to be also useful.
 > Not implementing the management falls under the "cut corners" directive.
 > However it's very simple to do, so I'm happy to add it if desired!
+> 
+> __Note:__ it could be nice to limit the view of a process (e.g. to stream)
+> to its submittor; however there is also a use-case for being more liberal,
+> and that is if a subordinate is queuing jobs for you and you want to monitor
+> them yourself.  Granular permissions for all that are far out of scope, and
+> with no requirement one way or the other, I propose to let you stream the
+> output of my jobs if you know the PID.
 > 
 > __Future:__ have admins who can set permissions (and probably limits too)
 > per user, or for groups, etc.
@@ -215,8 +203,13 @@ started the job.
 
 #### StartJob
 
-Starts a job, returning its `JobId` on success: a globally unique identifier
-used in the other endpoints.
+Starts a job, returning its PID on success.  The PID is the job identifier for
+the other endpoints.
+
+> __Note:__ I *think* that from the server's point of view the PIDs will be
+> unique and unaffected by the namespacing, but if I'm wrong -- if the reexec
+> messes with the PID in the parent namespace for instance -- then this may
+> need to change.
 
 #### GetJobStatus
 
@@ -228,15 +221,12 @@ Stops a job via `SIGTERM` by default or, optionally, `SIGKILL`.
 
 #### StreamJobOutput
 
-Streams the standard output of a job, starting from the beginning of output
-and continuing until all output is streamed.
+Streams the output of a job, starting from the beginning of output and
+continuing until all output is streamed.
 
-#### StreamJobError
-
-Same as StreamJobOutput but for standard error.
-
-> __Future:__ a RemoveJob endpoint to reap stopped jobs; a ListJobs endpoint
-> to show you what's running.
+> __Note:__ if we did not have infinite memory and CPU, we would obviously
+> need a RemoveStoppedJob or equivalent, because you need to stream even if a
+> job has already completed.
 
 ## Command-Line Interface
 
@@ -245,8 +235,8 @@ Starting the server with various settings:
 ```sh
 $ rnr serve # all defaults
 2024/11/10 23:00:00 rnr listening on :8088
-2024/11/10 23:01:00 Job 27016-67115230-f899-1234 from tim@tlprt.co started with PID 1234: /usr/bin/echo hello world
-2024/11/10 23:01:01 27016-67115230-f899-1234: STDOUT: hello world
+2024/11/10 23:01:00 Job from tim@tlprt.co has PID 1234: /usr/bin/echo hello world
+2024/11/10 23:01:01 1234: STDOUT: hello world
 ^C
 $ rnr serve --port=8080 --allow='tim@tlprt.co:/usr/bin/:/opt/' --noecho
 rnr listening on :8080
@@ -256,28 +246,27 @@ rnr listening on :8080
 Very simple job submission with default settings as echoed above:
 ```sh
 $ rnr run /usr/bin/echo hello world
-Job ID: 27016-67115230-f899-1234
+PID: 1234
 ```
 
 Submitting a job with default settings and monitoring then stopping it:
 
 ```sh
-$ rnr run /usr/bin/perl -- -nE 'say q(hello); sleep 1' /dev/random
-Job ID: 27016-67115233-ec3d-2345
-$ rnr stream 27016-67115233-ec3d-2345
-hello
-hello
-hello
+$ rnr run /usr/bin/perl -- -nE 'say $$; sleep 1' /dev/random
+PID: 2345
+$ rnr stream 2345
+2024/11/10 23:01:01 2345: STDOUT: 7734
+2024/11/10 23:01:02 2345: STDOUT: 7734
+2024/11/10 23:01:03 2345: STDOUT: 7734
+2024/11/10 23:01:04 2345: STDOUT: 7734
 ^C
-$ rnr status 27016-67115233-ec3d-2345
+$ rnr status 2345
 Status: running
-$ rnr stop 27016-67115233-ec3d-2345
+$ rnr stop 2345
 Exit 1
 $ 
 ```
 
-> __Note:__ the Job ID format may change but it will remain alphanumeric, of
-> approximately that length, and having no spaces.
 
 <!-- LINKS: -->
 
