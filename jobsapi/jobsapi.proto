@@ -2,8 +2,6 @@
 
 syntax = "proto3";
 
-import "google/protobuf/timestamp.proto";
-
 option go_package = "github.com/biztos/teleport-rnr/jobsapi";
 
 package jobsapi;
@@ -14,67 +12,71 @@ service JobsApi {
   // RPC to start a job.
   rpc StartJob(JobStartRequest) returns (JobId) {}
 
-  // RPC to stream a job.
-  rpc StreamJob(JobId) returns (stream JobOutputLine) {}
+  // RPC to stream a job's standard output.
+  rpc StreamJobOutput(JobId) returns (stream JobOutput) {}
+
+  // RPC to stream a job's standard error.
+  rpc StreamJobError(JobId) returns (stream JobOutput) {}
 
   // RPC to get a job's status.
-  rpc GetJobStatus(JobId) returns (JobStatusResult) {}
+  rpc GetJobStatus(JobId) returns (JobStatus) {}
 
-  // RPC to stop a job (optionally with SIGKILL).
-  rpc StopJob(JobStopRequest) returns (JobStatusResult) {}
+  // RPC to stop a job.
+  rpc StopJob(JobId) returns (JobStatus) {}
 
 }
 
-// A JobId identifies a job, at the moment only by PID.
+// A JobId uniquely identifies a job.
 message JobId {
-  int32 pid = 1;
+
+  // ULID or similar system-wide GUID of a job.
+  string job_id = 1;
 }
 
 // A JobStartRequest is sent in a StartJob rpc.
 message JobStartRequest {
+
+  // Full path to the command to be run, subject to authorization.
   string command = 1;
+
+  // Arguments to pass to the command.
   repeated string args = 2;
 }
 
-// JobStatus tells us whether a job is running, finished, or had an error.
-enum JobStatus {
-  UNKNOWN = 0;
-  RUNNING = 1;
-  FINISHED = 2;
-  ERROR = 3;
+// JobState corresponds to the state from /proc/pid/state
+// cf. https://man7.org/linux/man-pages/man5/proc_pid_status.5.html
+enum JobState {
+  UNKNOWN = 0;          // no such process, or state file not found.
+  RUNNING = 1;          // R (running)
+  SLEEPING = 2;         // S (sleeping)
+  DISK_SLEEP = 3;       // D (disk sleep)
+  STOPPED = 4;          // T (stopped)
+  TRACING_STOPPED = 5;  // t (tracing stop)
+  ZOMBIE = 6;           // Z (zombie)
+  DEAD = 7;             // X (dead)
+  OTHER = 8;            // other, unlisted/unexpected value (should log)
 }
 
-// A JobStatusResult is received in responsed to a GetJobStatus rpc.
-message JobStatusResult {
-  int32 pid = 1;
-  JobStatus status = 2;
+// A JobStatus is received in responsed to a GetJobStatus  or StopJob rpc.
+message JobStatus {
+
+  // The job state according to Linux.
+  JobState state = 1;
+
+  // Was the job stopped by a user via StopJob?
+  bool user_stopped = 2;
+
+  // The exit code captured by the runner.
   int32 exit_code = 3;
 }
 
-// A JobStreamRequest is sent in a StreamJob rpc.
-message JobStreamRequest {
-  int32 pid = 1;
-  bool truncate = 2;
-}
-
-// OutputType tells us whether the JobOutputLine came from STDOUT or STDERR.
-enum OutputType {
-  STDOUT = 0;
-  STDERR = 1;
-}
-
 // A JobOutputLine is received in response to a StreamJobOutput rpc.
-message JobOutputLine {
-  int32 pid = 1;
-  OutputType type = 2;
-  google.protobuf.Timestamp received = 3;
-  bool final = 4;
-  string output = 5;
-}
+message JobOutput {
 
-// A JobStopRequest is sent in a StopJob rpc.
-// The return type for this rpc is JobStatusResult (it may still be running).
-message JobStopRequest {
-  int32 pid = 1;
-  bool kill = 2;
+  // The output of the stream buffer.  May not be human-readable.
+  // The size depends on app settings but could be large (max ~ 4GB).
+  // Note that a smaller output length does not by itself mean output is
+  // finished.
+  bytes output = 1;
+
 }
