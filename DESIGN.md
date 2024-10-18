@@ -160,18 +160,20 @@ running.
 If a client wants to __stream output__ then the structs holding Stdout and
 Stderr for the process are read and streamed to the client.
 
-To __stop__ a job, first we check whether it's still running.  If so, we send
-it a SIGKILL, registering the result and returning the exit code.  We then
-reap any child processes it may have left behind, by searching for them in
-`/proc/pid/status`.
+To __stop__ a job, we write a `1` (as root) to its `cgroup.kill` [file][cgkill],
+thus killing all processes in the group.
 
 Stopped processes are still available for __streaming__ as long as the server
 is running (we have infinite CPU etc).
 
 However, the cgroup virtual directory is removed as soon as the server is
 aware that a job is no longer running.  These virtual directories are also
-removed on an orderly shutdown of the server, as running jobs are terminated
-or killed at that stage.
+removed on an orderly shutdown of the server, as running jobs are killed at
+that stage.
+
+> __Note:__ if we find any problem with `cgroup.kill` there is a fallback
+> method of signalling the process group, however this is [probably][pgkill]
+> less safe.
 
 ## gRPC Server
 
@@ -247,7 +249,7 @@ Returns the status of the job: running, stopped, error.
 
 #### StopJob
 
-Stops a job via `SIGTERM` by default or, optionally, `SIGKILL`.
+Stops a job via `SIGKILL`.  Also stops any child processes.
 
 #### StreamJobOutput
 
@@ -312,4 +314,5 @@ $
 [cgk8s]: https://kubernetes.io/docs/concepts/architecture/cgroups/
 [edking]: https://medium.com/@teddyking/namespaces-in-go-basics-e3f0fc1ff69a
 [upns]: https://docs.venafi.com/Docs/24.1/TopNav/Content/Certificates/r-UEP-support-SANs.php
-
+[cgkill]: https://lwn.net/Articles/855924/
+[pgkill]: https://biriukov.dev/docs/fd-pipe-session-terminal/3-process-groups-jobs-and-sessions/
