@@ -63,6 +63,33 @@ The process for creating a job-specific cgroup involves these steps:
 
 The correct device numbers must be determined in advance.
 
+In order to avoid the possibility of the job process escaping the cgroup and
+namespace limits, these are set inside a preliminary process that runs as
+root and is forked from the parent (server) process using [reexec][reexec].
+
+That process isolates _itself_ and then runs the requested job as a child
+process with restricted permissions (by default, as "nobody").  The child and
+its children will be automatically started within the parent cgroup and
+namespaces -- where "parent" is the child forked from the server:
+
+```
+DEFAULT CGROUP
+┃
+┣ server-pid (root)
+┃
+┗ JOB CGROUP
+  ┃
+  ┣ child-pid (root)                        <-- handles isolation and reexec
+  ┃  ┆
+  ┣  ┕ job-pid (nobody; child of child-pid) <-- requested process 
+  ┃    ┆
+  ┣    ┝ job-child-pid (nobody)
+  ┃    ┆
+  ┣    ┕ job-child-pid...
+  ┃      ┆
+  ┣      ┕ job-grandchild-pid... 
+```
+
 > __Note:__ I prefer to just limit all devices in the spirit of "cutting
 > corners"
 > 
@@ -92,7 +119,8 @@ Specifically:
 
 __TBD__
 
-> __NOTE:__ still getting this to work in POC.
+> __NOTE:__ still getting this to work in POC. Want network and /proc working.
+> Other mounts TBD.
 
 ### Process Output and Streaming
 
@@ -124,12 +152,7 @@ First a job is __started__:
 
 > __NOTE:__ this is not currently working in my POC due to "invalid argument"
 > errors when adding the PID to the cgroup.
-> 
-> __Danger:__ it should be possible to run a job that completes, or causes
-> damage, before the cgroup is created and the PID added to it.  So far this
-> appears to be accepted behavior, but I will at least try to roll the cgroup
-> actions into the reexec init stage, which theoretically (?) would solve the
-> problem.  Proving this would be very hard either way.
+
 
 Then its __status__ may be queried at will to confirm the process is still
 running.
